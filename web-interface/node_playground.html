@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Experience Canvas</title>
+    <!-- Include LeaderLine for drawing connections -->
+    <script src="https://cdn.jsdelivr.net/npm/leader-line-new@1.1.9/leader-line.min.js"></script>
+    <!-- Include PlainDraggable for easier dragging -->
+    <script src="https://cdn.jsdelivr.net/npm/plain-draggable@2.5.14/plain-draggable.min.js"></script>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background-color: #333;
+            color: #eee;
+            overflow: hidden; /* Prevent body scroll */
+        }
+
+        #palette {
+            width: 150px;
+            background-color: #444;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            border-right: 2px solid #555;
+            user-select: none; /* Prevent text selection */
+            height: 100%;
+            overflow-y: auto;
+        }
+
+        .palette-item {
+            background-color: #5a5a5a;
+            border: 1px solid #777;
+            padding: 8px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            cursor: grab;
+            text-align: center;
+            font-size: 0.9em;
+        }
+        .palette-item:active {
+            cursor: grabbing;
+        }
+
+        #canvas-container {
+            flex-grow: 1;
+            position: relative; /* Needed for absolute positioning of nodes */
+            overflow: auto; /* Allow canvas scrolling */
+             height: 100%;
+        }
+
+        #canvas {
+            position: relative; /* Child nodes positioned relative to this */
+            width: 2000px; /* Large canvas area */
+            height: 1500px;
+            background-color: #282828;
+            background-image: radial-gradient(#444 1px, transparent 0);
+            background-size: 20px 20px;
+        }
+
+        .node {
+            position: absolute;
+            background-color: #555;
+            border: 1px solid #888;
+            border-radius: 5px;
+            padding: 5px;
+            min-width: 150px;
+            min-height: 50px;
+            cursor: default; /* Use move cursor from PlainDraggable */
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            font-size: 0.9em;
+            user-select: none;
+        }
+
+        .node.selected {
+            border: 2px solid lightblue;
+            box-shadow: 0 0 10px lightblue;
+        }
+
+        .node-header {
+            background-color: #666;
+            padding: 3px 5px;
+            font-weight: bold;
+            border-radius: 3px 3px 0 0;
+            margin: -5px -5px 5px -5px; /* Fill top */
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .node-title { flex-grow: 1; }
+        .node-delete {
+            cursor: pointer;
+            font-size: 0.8em;
+            padding: 0 3px;
+            color: pink;
+        }
+        .node-delete:hover { color: red; }
+
+        .node-content {
+            padding: 5px;
+            flex-grow: 1; /* Allow content to expand */
+            max-height: 150px; /* Limit content height */
+            overflow: auto; /* Scroll if needed */
+        }
+        .node-content textarea, .node-content input {
+            width: calc(100% - 10px); /* Adjust for padding */
+            background-color: #ddd;
+            color: #333;
+            border: 1px solid #aaa;
+            margin-top: 5px;
+            font-family: inherit;
+            font-size: 0.95em;
+        }
+         .node-content img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin-top: 5px;
+         }
+         .node-content button {
+             margin-top: 5px;
+             width: 100%;
+             padding: 5px;
+         }
+
+
+        .port {
+            width: 12px;
+            height: 12px;
+            background-color: cyan;
+            border: 1px solid #333;
+            border-radius: 50%;
+            position: absolute;
+            cursor: crosshair;
+        }
+        .port.output {
+            background-color: magenta;
+            right: -7px; /* Position outside node border */
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .port.input {
+            background-color: limegreen;
+            left: -7px; /* Position outside node border */
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        /* Example for multiple ports */
+         .port.input.top { top: 25%; }
+         .port.input.bottom { top: 75%; }
+         .port.output.true { top: 30%; background-color: lightgreen; }
+         .port.output.false { top: 70%; background-color: lightcoral; }
+
+
+        #inspector {
+            width: 250px;
+            background-color: #444;
+            padding: 10px;
+            border-left: 2px solid #555;
+            height: 100%;
+            overflow-y: auto;
+            font-size: 0.9em;
+        }
+        #inspector h3 { margin-top: 0; }
+        #inspector label { display: block; margin-top: 10px; }
+        #inspector input, #inspector textarea, #inspector select {
+            width: 95%;
+            margin-top: 3px;
+            padding: 4px;
+            background-color: #eee;
+            border: 1px solid #999;
+            color: #333;
+        }
+        #inspector textarea { min-height: 60px; }
+        #inspector button {
+            margin-top: 10px;
+            padding: 5px 10px;
+        }
+
+        #play-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+            display: flex; /* Use flexbox for layout */
+            flex-direction: column; /* Stack items vertically */
+            align-items: flex-end; /* Align items to the right */
+            gap: 5px; /* Add spacing between controls */
+        }
+        #play-controls .api-key-section { /* Style the API key section */
+             margin-bottom: 10px;
+             background-color: #ffdddd;
+             border: 1px solid red;
+             padding: 5px;
+             border-radius: 3px;
+             text-align: left; /* Align text inside the box left */
+             width: 100%; /* Make it take available width */
+         }
+         #play-controls .button-group { /* Group the main buttons */
+             display: flex;
+             gap: 5px;
+         }
+         #play-controls button { padding: 8px 15px; font-size: 1em; }
+         #play-controls .api-key-section button { padding: 2px 5px; font-size: 0.8em; } /* Smaller API key button */
+         #play-controls label, #play-controls span, #play-controls p { font-size: 0.8em; color: #333; } /* Style API text */
+         #play-controls .api-key-section p { font-size: 0.7em; color: #c00; margin: 2px 0 0 0; } /* Warning text style */
+         #play-controls input[type="password"] { width: auto; } /* Adjust API key input width */
+
+
+        #play-output-container {
+            position: fixed; /* Overlay */
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(0,0,0,0.85);
+            z-index: 1000;
+            display: none; /* Hidden by default */
+            align-items: center;
+            justify-content: center;
+            color: #eee;
+            text-align: center;
+        }
+        #play-output {
+            background-color: #222;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+            border: 1px solid #555;
+            text-align: left; /* Align text inside the output left */
+        }
+        #play-output img { max-width: 100%; max-height: 40vh; display: block; margin: 15px auto; }
+        #play-output button {
+            display: inline-block; /* Allow buttons side-by-side if needed */
+            margin: 10px 5px;
+            padding: 10px 20px;
+            min-width: 150px;
+            cursor: pointer;
+            background-color: #555;
+            color: #eee;
+            border: 1px solid #888;
+            border-radius: 4px;
+        }
+         #play-output button:hover { background-color: #666; }
+         #play-output input[type="text"] {
+             padding: 8px;
+             margin: 15px 0; /* Adjust margin */
+             display: block;
+             width: 80%;
+             background-color: #ddd;
+             color: #333;
+             border: 1px solid #aaa;
+         }
+         #play-output pre { /* Style for LLM output */
+            white-space: pre-wrap;
+            background-color: #333;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 5px;
+            font-family: monospace;
+         }
+         #close-play-mode {
+             position: absolute;
+             top: 15px;
+             right: 15px;
+             background: red;
+             color: white;
+             border: none;
+             border-radius: 50%;
+             width: 30px;
+             height: 30px;
+             font-weight: bold;
+             cursor: pointer;
+         }
+
+        /* Leader line styles */
+        .leader-line { stroke-width: 3px; stroke: orange; }
+    </style>
+</head>
+<body>
+
+    <div id="palette">
+        <h4>Nodes</h4>
+        <div class="palette-item" draggable="true" data-type="text">Text Display</div>
+        <div class="palette-item" draggable="true" data-type="image">Image</div>
+        <div class="palette-item" draggable="true" data-type="button">Button</div>
+        <div class="palette-item" draggable="true" data-type="input">Text Input</div>
+        <div class="palette-item" draggable="true" data-type="llm">LLM Ask</div>
+        <div class="palette-item" draggable="true" data-type="condition">Condition (If/Else)</div>
+        <div class="palette-item" draggable="true" data-type="start">⭐ Start Point</div>
+    </div>
+
+    <div id="canvas-container">
+        <div id="canvas">
+            <!-- Nodes will be added here -->
+        </div>
+        <div id="play-controls">
+             <!-- ++ API Key Input ++ -->
+             <div class="api-key-section">
+                 <label for="api-key-input">OpenAI API Key (Keep Secret!):</label><br>
+                 <input type="password" id="api-key-input" size="20" placeholder="sk-...">
+                 <button id="set-api-key-button">Set</button>
+                 <span id="api-key-status"></span>
+                 <p>Warning: Key is handled client-side. For testing only.</p>
+             </div>
+             <!-- ++ End API Key Input ++ -->
+             <div class="button-group">
+                 <button id="play-button">▶️ Play</button>
+                 <button id="save-button" title="Save to Local Storage">💾 Save</button>
+                 <button id="load-button" title="Load from Local Storage">📂 Load</button>
+                 <button id="export-button" title="Download as JSON">📤 Export</button>
+                 <input type="file" id="import-file" accept=".json" style="display: none;">
+                 <button id="import-button" title="Import from JSON">📥 Import</button>
+             </div>
+        </div>
+    </div>
+
+    <div id="inspector">
+        <h3>Inspector</h3>
+        <div id="inspector-content">
+            Select a node to edit its properties.
+        </div>
+    </div>
+
+    <div id="play-output-container">
+        <div id="play-output">
+            <!-- Play mode content goes here -->
+        </div>
+         <button id="close-play-mode" title="Close Play Mode">X</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const canvasContainer = document.getElementById('canvas-container');
+        const palette = document.getElementById('palette');
+        const inspector = document.getElementById('inspector');
+        const inspectorContent = document.getElementById('inspector-content');
+        const playButton = document.getElementById('play-button');
+        const playOutputContainer = document.getElementById('play-output-container');
+        const playOutput = document.getElementById('play-output');
+        const closePlayModeButton = document.getElementById('close-play-mode');
+        const saveButton = document.getElementById('save-button');
+        const loadButton = document.getElementById('load-button');
+        const exportButton = document.getElementById('export-button');
+        const importButton = document.getElementById('import-button');
+        const importFile = document.getElementById('import-file');
+
+        let nodes = {}; // { id: { id, type, name, x, y, options, element, ports: {in:[], out:[]} } }
+        let connections = []; // { id, line, startNode, startPort, endNode, endPort }
+        let selectedNodeId = null;
+        let nextNodeId = 0;
+        let nextConnectionId = 0;
+        let connectingState = {
+            active: false,
+            startNodeId: null,
+            startPortId: null,
+            startPortElement: null,
+            tempLine: null
+        };
+        let playState = {
+            active: false,
+            currentNodeId: null,
+            history: [],
+            variables: {} // For simple state/flags
+        };
+
+        // ++ API Key Handling ++
+        const apiKeyInput = document.getElementById('api-key-input');
+        const setApiKeyButton = document.getElementById('set-api-key-button');
+        const apiKeyStatus = document.getElementById('api-key-status');
+        let openAIApiKey = null; // DO NOT SAVE THIS KEY
+
+        setApiKeyButton.addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key && key.startsWith('sk-')) {
+                openAIApiKey = key;
+                apiKeyStatus.textContent = 'Key set!';
+                apiKeyStatus.style.color = 'green';
+                apiKeyInput.value = ''; // Clear input after setting
+                console.log("OpenAI API Key set (temporarily).");
+            } else if (key) {
+                 openAIApiKey = null;
+                 apiKeyStatus.textContent = 'Invalid key format.';
+                 apiKeyStatus.style.color = 'red';
+            } else {
+                 openAIApiKey = null;
+                 apiKeyStatus.textContent = ''; // Clear status if input empty
+            }
+        });
+        // ++ End API Key Handling ++
+
+
+        // --- Draggable Palette Items ---
+        palette.addEventListener('dragstart', (e) => {
+            if (e.target.classList.contains('palette-item')) {
+                e.dataTransfer.setData('text/plain', e.target.dataset.type);
+                e.dataTransfer.effectAllowed = 'copy';
+            }
+        });
+
+        // --- Canvas Drag and Drop ---
+        canvas.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Allow dropping
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const nodeType = e.dataTransfer.getData('text/plain');
+            if (!nodeType) return;
+
+            // Calculate drop position relative to the canvas, considering scroll
+            const canvasRect = canvas.getBoundingClientRect();
+            const x = e.clientX - canvasRect.left + canvasContainer.scrollLeft;
+            const y = e.clientY - canvasRect.top + canvasContainer.scrollTop;
+
+            createNode(nodeType, x, y);
+        });
+
+        // --- Node Creation ---
+        function createNode(type, x, y, id = null, options = {}, name = null) {
+            const nodeId = id ?? `node-${nextNodeId++}`;
+            if (nodes[nodeId]) { // Prevent ID collision on load
+                 nextNodeId = Math.max(nextNodeId, parseInt(nodeId.split('-')[1] || 0) + 1);
+            }
+
+            const nodeElement = document.createElement('div');
+            nodeElement.classList.add('node');
+            nodeElement.id = nodeId;
+            nodeElement.style.left = `${x}px`;
+            nodeElement.style.top = `${y}px`;
+            nodeElement.dataset.nodeId = nodeId; // Make it easy to get ID from element
+
+            const nodeData = {
+                id: nodeId,
+                type: type,
+                name: name || `Node ${nodeId.split('-')[1]} (${type})`,
+                x: x,
+                y: y,
+                options: getDefaultOptions(type, options),
+                element: nodeElement,
+                ports: { in: {}, out: {} } // { portId: element }
+            };
+            nodes[nodeId] = nodeData;
+
+            renderNodeContent(nodeData); // Initial render
+            canvas.appendChild(nodeElement);
+
+             // Make node draggable using PlainDraggable
+             const draggable = new PlainDraggable(nodeElement, {
+                containment: canvas,
+                onDrag: (pos) => {
+                    nodes[nodeId].x = pos.left;
+                    nodes[nodeId].y = pos.top;
+                    updateConnectionsForNode(nodeId);
+                },
+                onDragEnd: () => {
+                    // Optional: snap to grid?
+                }
+            });
+            nodeData.draggable = draggable; // Store reference if needed
+
+            // Select node on click
+            nodeElement.addEventListener('click', (e) => {
+                // Stop propagation if a port was clicked
+                if (e.target.classList.contains('port')) return;
+                selectNode(nodeId);
+                e.stopPropagation(); // Prevent canvas click deselecting
+            });
+
+            return nodeId;
+        }
+
+        // --- Node Content & Ports ---
+        function renderNodeContent(nodeData) {
+            const { id, type, name, options, element } = nodeData;
+            element.innerHTML = ''; // Clear existing
+
+            // Header
+            const header = document.createElement('div');
+            header.classList.add('node-header');
+            const title = document.createElement('span');
+            title.classList.add('node-title');
+            title.textContent = name;
+            const deleteBtn = document.createElement('span');
+            deleteBtn.classList.add('node-delete');
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.title = 'Delete Node';
+            deleteBtn.onclick = (e) => { deleteNode(id); e.stopPropagation(); };
+            header.appendChild(title);
+            header.appendChild(deleteBtn);
+            element.appendChild(header);
+
+            // Content Area
+            const content = document.createElement('div');
+            content.classList.add('node-content');
+            element.appendChild(content);
+
+            // Ports (Clear old ones first - important if re-rendering)
+            nodeData.ports = { in: {}, out: {} };
+
+            // Type-specific content and ports
+            let inputPort, outputPort;
+            switch (type) {
+                case 'start':
+                    content.textContent = 'Story starting point.';
+                    // No input, one output
+                    addPort(nodeData, 'out_default', 'output');
+                    break;
+                case 'text':
+                    content.textContent = options.text || 'Default text...';
+                     addPort(nodeData, 'in_default', 'input');
+                     addPort(nodeData, 'out_default', 'output');
+                    break;
+                case 'image':
+                    const img = document.createElement('img');
+                    img.src = options.imageUrl || 'https://via.placeholder.com/150?text=No+Image';
+                    img.onerror = () => { img.src = 'https://via.placeholder.com/150?text=Bad+URL'; };
+                    content.appendChild(img);
+                    addPort(nodeData, 'in_default', 'input');
+                    addPort(nodeData, 'out_default', 'output');
+                    break;
+                case 'button':
+                     const btn = document.createElement('button');
+                     btn.textContent = options.buttonText || 'Click Me';
+                     btn.disabled = true; // Only clickable in play mode
+                     content.appendChild(btn);
+                     addPort(nodeData, 'in_default', 'input'); // Input triggers display
+                     addPort(nodeData, 'out_click', 'output'); // Output fires on click
+                     if (nodeData.ports.out.out_click) {
+                        nodeData.ports.out.out_click.style.top = '70%'; // Move port down
+                     }
+                    break;
+                 case 'input':
+                    content.textContent = options.promptLabel || 'Enter text:';
+                    const inputPreview = document.createElement('input');
+                    inputPreview.type = 'text';
+                    inputPreview.placeholder = 'User input appears here';
+                    inputPreview.disabled = true;
+                    content.appendChild(inputPreview);
+                     addPort(nodeData, 'in_default', 'input');
+                     addPort(nodeData, 'out_user_input', 'output');
+                     if (nodeData.ports.out.out_user_input) {
+                        nodeData.ports.out.out_user_input.style.top = '70%';
+                     }
+                    break;
+                 case 'llm':
+                    content.textContent = `LLM Prompt: "${(options.prompt || '').substring(0, 30)}..."`;
+                     addPort(nodeData, 'in_context', 'input'); // Input provides context
+                     addPort(nodeData, 'out_result', 'output'); // Output provides LLM response
+                    break;
+                 case 'condition':
+                    content.textContent = `If: ${options.condition || '???'}`;
+                    addPort(nodeData, 'in_eval', 'input'); // Input triggers evaluation
+                    // Add specific output ports for true/false
+                    addPort(nodeData, 'out_true', 'output', ['true']);
+                    addPort(nodeData, 'out_false', 'output', ['false']);
+                     // Adjust classes/styles for styling if needed
+                     if (nodeData.ports.out.out_true) nodeData.ports.out.out_true.classList.add('true');
+                     if (nodeData.ports.out.out_false) nodeData.ports.out.out_false.classList.add('false');
+                    break;
+                 default:
+                    content.textContent = `Unknown type: ${type}`;
+            }
+
+             // Re-apply selected class if necessary
+            if (nodeData.id === selectedNodeId) {
+                nodeData.element.classList.add('selected');
+            }
+        }
+
+        function addPort(nodeData, portId, type, classes = []) {
+             const portElement = document.createElement('div');
+             portElement.classList.add('port', type, ...classes);
+             portElement.dataset.nodeId = nodeData.id;
+             portElement.dataset.portId = portId;
+             portElement.title = `${type} port: ${portId}`;
+
+             // Store reference
+             if (type === 'input') nodeData.ports.in[portId] = portElement;
+             if (type === 'output') nodeData.ports.out[portId] = portElement;
+
+             nodeData.element.appendChild(portElement);
+
+            // Connection Handling
+            portElement.addEventListener('mousedown', startConnecting);
+            portElement.addEventListener('mouseup', finishConnecting);
+            portElement.addEventListener('mouseenter', (e) => { // Highlight potential target
+                if (connectingState.active && e.target.classList.contains('input') && connectingState.startPortElement !== e.target) {
+                    e.target.style.backgroundColor = 'yellow';
+                }
+            });
+             portElement.addEventListener('mouseleave', (e) => {
+                 if (e.target.classList.contains('input') && e.target.style.backgroundColor === 'yellow') { // Only reset if highlighted
+                     const originalColor = e.target.classList.contains('true') ? 'lightgreen' : e.target.classList.contains('false') ? 'lightcoral' : 'limegreen';
+                     e.target.style.backgroundColor = originalColor; // Reset color
+                 }
+             });
+        }
+
+
+        function getDefaultOptions(type, existingOptions = {}) {
+             switch (type) {
+                case 'text': return { text: 'Enter description here...', ...existingOptions };
+                case 'image': return { imageUrl: '', ...existingOptions };
+                case 'button': return { buttonText: 'Choice', ...existingOptions };
+                case 'input': return { promptLabel: 'Your Input:', ...existingOptions };
+                case 'llm': return { prompt: 'Analyze the following input: {input}', ...existingOptions };
+                case 'condition': return { condition: 'variable == value', logicType: 'simple', llmConditionPrompt: 'Does the input mean YES?', ...existingOptions }; // logicType: simple|llm
+                 default: return {...existingOptions};
+             }
+        }
+
+        // --- Node Selection & Inspector ---
+        function selectNode(nodeId) {
+            if (selectedNodeId && nodes[selectedNodeId]) {
+                nodes[selectedNodeId].element.classList.remove('selected');
+            }
+            if (nodeId && nodes[nodeId]) {
+                selectedNodeId = nodeId;
+                nodes[nodeId].element.classList.add('selected');
+                populateInspector(nodes[nodeId]);
+            } else {
+                selectedNodeId = null;
+                inspectorContent.innerHTML = 'Select a node to edit its properties.';
+            }
+        }
+
+        function populateInspector(nodeData) {
+            inspectorContent.innerHTML = ''; // Clear
+            const { id, type, name, options } = nodeData;
+
+            inspectorContent.innerHTML += `<h3>${type} Node (${id})</h3>`;
+
+            // Common fields
+            inspectorContent.appendChild(createInspectorField('Name', 'name', name, 'text', (value) => {
+                 nodeData.name = value;
+                 const titleElement = nodeData.element.querySelector('.node-title');
+                 if (titleElement) titleElement.textContent = value; // Update header safely
+            }));
+
+            // Type-specific fields
+             switch (type) {
+                case 'text':
+                    inspectorContent.appendChild(createInspectorField('Text Content', 'text', options.text, 'textarea', (value) => {
+                        options.text = value;
+                        const contentElement = nodeData.element.querySelector('.node-content');
+                        if (contentElement) contentElement.textContent = value; // Update node view safely
+                    }));
+                    break;
+                case 'image':
+                     inspectorContent.appendChild(createInspectorField('Image URL', 'imageUrl', options.imageUrl, 'text', (value) => {
+                        options.imageUrl = value;
+                         const img = nodeData.element.querySelector('img');
+                         if (img) {
+                             img.src = value || 'https://via.placeholder.com/150?text=No+Image';
+                             img.onerror = () => { img.src = 'https://via.placeholder.com/150?text=Bad+URL'; };
+                         }
+                    }));
+                    break;
+                 case 'button':
+                     inspectorContent.appendChild(createInspectorField('Button Text', 'buttonText', options.buttonText, 'text', (value) => {
+                         options.buttonText = value;
+                         const btn = nodeData.element.querySelector('button');
+                         if(btn) btn.textContent = value;
+                     }));
+                    break;
+                case 'input':
+                     inspectorContent.appendChild(createInspectorField('Prompt Label', 'promptLabel', options.promptLabel, 'text', (value) => {
+                         options.promptLabel = value;
+                         // Find the text node before the input preview (more robust)
+                         const contentDiv = nodeData.element.querySelector('.node-content');
+                         if (contentDiv && contentDiv.firstChild && contentDiv.firstChild.nodeType === Node.TEXT_NODE) {
+                             contentDiv.firstChild.textContent = value;
+                         }
+                     }));
+                    break;
+                case 'llm':
+                     inspectorContent.appendChild(createInspectorField('LLM Prompt', 'prompt', options.prompt, 'textarea', (value) => {
+                         options.prompt = value;
+                         const contentElement = nodeData.element.querySelector('.node-content');
+                         if (contentElement) contentElement.textContent = `LLM Prompt: "${(value || '').substring(0, 30)}..."`;
+                     }));
+                    break;
+                case 'condition':
+                     inspectorContent.appendChild(createInspectorField('Logic Type', 'logicType', options.logicType, 'select', (value) => {
+                         options.logicType = value;
+                         populateInspector(nodeData); // Re-render inspector for relevant fields
+                    }, [{value: 'simple', text: 'Simple (Var == Val)'}, {value: 'llm', text: 'LLM Based'}]));
+
+                     if (options.logicType === 'simple') {
+                         inspectorContent.appendChild(createInspectorField('Condition (e.g., flag == true)', 'condition', options.condition, 'text', (value) => {
+                             options.condition = value;
+                             const contentElement = nodeData.element.querySelector('.node-content');
+                             if (contentElement) contentElement.textContent = `If: ${value || '???'}`;
+                         }));
+                     } else {
+                        inspectorContent.appendChild(createInspectorField('LLM Condition Prompt (Must output only YES or NO)', 'llmConditionPrompt', options.llmConditionPrompt, 'textarea', (value) => {
+                             options.llmConditionPrompt = value;
+                             const contentElement = nodeData.element.querySelector('.node-content');
+                             if (contentElement) contentElement.textContent = `If LLM: "${value.substring(0,20)}..."`;
+                         }));
+                     }
+                    break;
+            }
+        }
+
+        function createInspectorField(labelText, key, value, type = 'text', onChange, optionsList = null) {
+            const container = document.createElement('div');
+            const label = document.createElement('label');
+            label.textContent = labelText + ':';
+            container.appendChild(label);
+
+            let input;
+            if (type === 'textarea') {
+                input = document.createElement('textarea');
+                input.value = value || '';
+            } else if (type === 'select' && optionsList) {
+                input = document.createElement('select');
+                optionsList.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.textContent = opt.text;
+                    if (opt.value === value) option.selected = true;
+                    input.appendChild(option);
+                });
+            } else {
+                 input = document.createElement('input');
+                 input.type = type;
+                 input.value = value || '';
+            }
+
+            input.onchange = (e) => onChange(e.target.value);
+            input.oninput = (e) => { if(type !== 'textarea' && type !== 'select') onChange(e.target.value); }; // More responsive for text/other inputs
+
+            container.appendChild(input);
+            return container;
+        }
+
+        // --- Node Deletion ---
+        function deleteNode(nodeId) {
+            if (!nodes[nodeId]) return;
+
+            // Remove connections linked to this node
+            const connectionsToRemove = connections.filter(c => c.startNode === nodeId || c.endNode === nodeId);
+            connectionsToRemove.forEach(c => removeConnection(c.id));
+
+            // Remove element and data
+            nodes[nodeId].element.remove();
+            nodes[nodeId]?.draggable?.remove(); // Clean up draggable instance
+            delete nodes[nodeId];
+
+            if (selectedNodeId === nodeId) {
+                selectNode(null); // Clear inspector
+            }
+            console.log(`Node ${nodeId} deleted`);
+        }
+
+        // --- Canvas Interaction ---
+        canvasContainer.addEventListener('click', (e) => {
+            // Deselect node if clicking on canvas background
+            if (e.target === canvas || e.target === canvasContainer) {
+                selectNode(null);
+                // Cancel connection attempt if clicking background
+                if (connectingState.active) {
+                    cancelConnecting();
+                }
+            }
+        });
+
+        // --- Connection Logic ---
+        function startConnecting(e) {
+            e.stopPropagation();
+            const portElement = e.target;
+            if (!portElement.classList.contains('port')) return;
+
+            if (portElement.classList.contains('output')) {
+                connectingState.active = true;
+                connectingState.startNodeId = portElement.dataset.nodeId;
+                connectingState.startPortId = portElement.dataset.portId;
+                connectingState.startPortElement = portElement;
+
+                 // Start drawing a temporary line
+                 const dummyEnd = document.createElement('div'); // Invisible target for the line
+                 dummyEnd.style.position = 'absolute';
+                 dummyEnd.style.pointerEvents = 'none'; // Don't interfere with mouse events
+                 canvas.appendChild(dummyEnd);
+                 moveDummyEnd(e.clientX, e.clientY, dummyEnd); // Initial position
+
+                connectingState.tempLine = new LeaderLine(
+                    portElement,
+                    LeaderLine.pointAnchor(dummyEnd), // Use pointAnchor for better positioning
+                     {
+                         color: 'gray',
+                         size: 2,
+                         dash: { animation: true },
+                         endPlug: 'arrow1' // Add an arrow to the temp line
+                     }
+                 );
+
+                // Add listener to track mouse movement for the temp line
+                document.addEventListener('mousemove', drawTempLine);
+                console.log(`Starting connection from ${connectingState.startNodeId}/${connectingState.startPortId}`);
+            } else {
+                 console.log("Cannot start connection from an input port.");
+            }
+        }
+
+         function moveDummyEnd(clientX, clientY, dummyEnd) {
+             const canvasRect = canvas.getBoundingClientRect();
+             // Calculate position relative to the canvas element itself
+             const x = clientX - canvasRect.left + canvasContainer.scrollLeft;
+             const y = clientY - canvasRect.top + canvasContainer.scrollTop;
+             dummyEnd.style.left = `${x}px`;
+             dummyEnd.style.top = `${y}px`;
+         }
+
+         function drawTempLine(e) {
+             if (connectingState.active && connectingState.tempLine) {
+                 const dummyEnd = document.querySelector('.leader-line-end-point'); // Get the dummy element via class
+                 if (dummyEnd) { // Check if dummyEnd element exists
+                     moveDummyEnd(e.clientX, e.clientY, dummyEnd);
+                     try { connectingState.tempLine.position(); } catch(err) { console.warn("Error repositioning temp line:", err)}// Redraw the line
+                 }
+             }
+         }
+
+         function finishConnecting(e) {
+             e.stopPropagation();
+             const endPortElement = e.target;
+
+             if (connectingState.active && endPortElement.classList.contains('port') && endPortElement.classList.contains('input')) {
+                const endNodeId = endPortElement.dataset.nodeId;
+                const endPortId = endPortElement.dataset.portId;
+
+                 if (connectingState.startNodeId !== endNodeId) {
+                     createConnection(
+                         connectingState.startNodeId,
+                         connectingState.startPortId,
+                         endNodeId,
+                         endPortId,
+                         connectingState.startPortElement,
+                         endPortElement
+                     );
+                 } else {
+                     console.log("Cannot connect node to itself.");
+                 }
+             }
+             // Always clean up connection state, even if connection failed
+             cancelConnecting();
+         }
+
+        function cancelConnecting() {
+             if (connectingState.tempLine) {
+                 const dummyEnd = document.querySelector('.leader-line-end-point');
+                 if (dummyEnd && dummyEnd.parentNode === canvas) {
+                    // canvas.removeChild(dummyEnd); // LeaderLine removes its own elements now
+                 }
+                 try { connectingState.tempLine.remove(); } catch (error) {console.warn("Error removing temp line:", error)}
+             }
+             document.removeEventListener('mousemove', drawTempLine);
+             connectingState.active = false;
+             connectingState.startNodeId = null;
+             connectingState.startPortId = null;
+             connectingState.startPortElement = null;
+             connectingState.tempLine = null;
+         }
+
+
+        function createConnection(startNodeId, startPortId, endNodeId, endPortId, startPortElement, endPortElement) {
+            // Prevent duplicate connections to the same input port (optional)
+             const existingConnection = connections.find(c => c.endNode === endNodeId && c.endPort === endPortId);
+             if (existingConnection) {
+                 console.log(`Input port ${endNodeId}/${endPortId} already connected. Replacing connection.`);
+                 // Remove the old connection before creating the new one
+                 removeConnection(existingConnection.id);
+                 // return; // Uncomment to prevent overriding connection
+             }
+
+             const connectionId = `conn-${nextConnectionId++}`;
+             try {
+                 const line = new LeaderLine(
+                     startPortElement,
+                     endPortElement,
+                     {
+                         color: 'orange',
+                         size: 3,
+                         path: 'fluid', // 'fluid' or 'grid' or 'straight'
+                         endPlug: 'arrow1'
+                      }
+                 );
+
+                 connections.push({
+                     id: connectionId,
+                     line: line,
+                     startNode: startNodeId,
+                     startPort: startPortId,
+                     endNode: endNodeId,
+                     endPort: endPortId
+                 });
+                 console.log(`Connection ${connectionId} created: ${startNodeId}/${startPortId} -> ${endNodeId}/${endPortId}`);
+             } catch (error) {
+                 console.error("Error creating LeaderLine:", error);
+                 alert("Error creating connection line. Check console for details.");
+             }
+        }
+
+        function removeConnection(connectionId) {
+             const index = connections.findIndex(c => c.id === connectionId);
+             if (index > -1) {
+                 try { connections[index].line.remove(); } catch(e) { console.warn("Error removing line for connection", connectionId, e)} // LeaderLine might throw if element is gone
+                 connections.splice(index, 1);
+                 console.log(`Connection ${connectionId} removed`);
+             }
+         }
+
+        function updateConnectionsForNode(nodeId) {
+             connections.forEach(conn => {
+                 if (conn.startNode === nodeId || conn.endNode === nodeId) {
+                     try { conn.line.position(); } catch(e) {console.warn("Error repositioning line for node", nodeId, e)} // Might fail if node/port removed
+                 }
+             });
+         }
+
+         /**
+         * Calls the OpenAI API using the fetch API.
+         * VERY INSECURE - API key is exposed client-side. Use only for local testing.
+         * @param {string} userPrompt The main prompt/instruction for the LLM.
+         * @param {string} [inputContext=""] Optional context from previous nodes.
+         * @param {string} [model="gpt-3.5-turbo"] The model to use.
+         * @returns {Promise<string>} The LLM response text or an error message.
+         */
+        async function callOpenAI(userPrompt, inputContext = "", model = "gpt-3.5-turbo") {
+            console.log("--- Calling OpenAI API ---");
+            console.log("Prompt:", userPrompt);
+            console.log("Input Context:", inputContext);
+
+            if (!openAIApiKey) {
+                console.error("OpenAI API Key not set!");
+                return "Error: OpenAI API Key not set. Please set it in the controls.";
+            }
+
+            const apiUrl = 'https://api.openai.com/v1/chat/completions';
+            const messages = [];
+
+            // Optional: Add system message if needed
+            // messages.push({ role: "system", content: "You are a helpful assistant creating interactive stories." });
+
+            // Combine context and prompt effectively for the chat model
+            let combinedUserContent = "";
+            if (inputContext) {
+                combinedUserContent += `Context:\n${inputContext}\n\n---\n\n`;
+            }
+            combinedUserContent += `Instruction:\n${userPrompt}`;
+
+            messages.push({ role: "user", content: combinedUserContent });
+
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${openAIApiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: messages,
+                        // temperature: 0.7, // Optional parameters
+                        // max_tokens: 200, // Adjust max tokens if needed
+                    })
+                });
+
+                const data = await response.json(); // Always try to parse JSON
+
+                if (!response.ok) {
+                    // Handle API errors (like invalid key, rate limits, etc.)
+                    const errorMessage = data.error?.message || `HTTP error ${response.status}`;
+                    console.error('OpenAI API Error:', errorMessage, data);
+                    return `Error from OpenAI: ${errorMessage}`;
+                }
+
+                if (data.choices && data.choices.length > 0 && data.choices[0].message) {
+                    const resultText = data.choices[0].message.content.trim();
+                    console.log("OpenAI Response:", resultText);
+                    return resultText;
+                } else {
+                    console.error('Invalid response structure from OpenAI:', data);
+                    return 'Error: Received invalid response structure from OpenAI.';
+                }
+
+            } catch (error) {
+                console.error('Network or other error calling OpenAI API:', error);
+                return `Error: Failed to connect to OpenAI API. ${error.message}`;
+            }
+        }
+
+
+        // --- Play Mode ---
+        playButton.addEventListener('click', () => {
+             const startNodes = Object.values(nodes).filter(n => n.type === 'start');
+             if (startNodes.length === 0) {
+                 alert("Error: No 'Start Point' node found!");
+                 return;
+             }
+             if (startNodes.length > 1) {
+                 alert("Warning: Multiple 'Start Point' nodes found. Using the first one: " + startNodes[0].id);
+             }
+             playState.active = true;
+             playState.currentNodeId = startNodes[0].id;
+             playState.history = [];
+             playState.variables = {}; // Reset variables
+             playOutputContainer.style.display = 'flex';
+             runPlayStep(playState.currentNodeId); // Initial step
+        });
+
+        closePlayModeButton.addEventListener('click', () => {
+            playState.active = false;
+            playState.currentNodeId = null;
+            playOutputContainer.style.display = 'none';
+            playOutput.innerHTML = '';
+        });
+
+        // !! IMPORTANT: Make runPlayStep an async function !!
+        async function runPlayStep(nodeId) {
+            if (!playState.active || !nodeId || !nodes[nodeId]) {
+                console.error("Play Error: Invalid node ID or state.", nodeId, playState);
+                if (playState.active) { // Only show error if play mode is supposed to be active
+                    playOutput.innerHTML = `<p style="color: red;">Error: Could not find node ${nodeId} or play state inactive.</p>`;
+                }
+                return;
+            }
+
+            const node = nodes[nodeId];
+            console.log(`Play Step: ${node.id} (${node.type})`);
+            playOutput.innerHTML = ''; // Clear previous step's content
+            playState.currentNodeId = nodeId;
+            // Optional: Add history tracking here if needed
+
+            let nextNodeId = null; // Usually only one for non-button nodes
+            let nextNodePort = 'out_default'; // Default output port
+            let evaluationResult = null; // For conditions
+            let inputDataForNext = null; // Data passed to next node
+            let waitForUserInput = false; // Flag to prevent auto-advance
+
+            // Process current node
+            try {
+                switch (node.type) {
+                    case 'start':
+                        playOutput.innerHTML += `<p>Starting the experience...</p>`;
+                        nextNodePort = 'out_default';
+                        break;
+                    case 'text':
+                        playOutput.innerHTML += `<p>${node.options.text || ''}</p>`;
+                        inputDataForNext = node.options.text;
+                        nextNodePort = 'out_default';
+                        break;
+                    case 'image':
+                        playOutput.innerHTML += `<img src="${node.options.imageUrl || 'https://via.placeholder.com/150?text=No+Image'}" alt="Story Image">`;
+                        inputDataForNext = node.options.imageUrl;
+                        nextNodePort = 'out_default';
+                        break;
+                    case 'button':
+                         // Buttons require finding *outgoing* connections from the 'out_click' port
+                         const outgoingClickConnections = connections.filter(c => c.startNode === nodeId && c.startPort === 'out_click');
+                         if (outgoingClickConnections.length > 0) {
+                             playOutput.innerHTML += `<p>Choose an option:</p>`; // Add prompt
+                             outgoingClickConnections.forEach(conn => {
+                                 const targetNode = nodes[conn.endNode];
+                                 if (targetNode) {
+                                     const button = document.createElement('button');
+                                     // Use the BUTTON node's text for the button itself
+                                     button.textContent = node.options.buttonText || 'Choice';
+                                     button.onclick = () => {
+                                        inputDataForNext = node.options.buttonText; // Pass button text as context maybe
+                                        playState.variables['lastAction'] = inputDataForNext; // Store action
+                                        runPlayStep(targetNode.id); // Trigger next step with target ID
+                                    };
+                                     playOutput.appendChild(button);
+                                 } else {
+                                     console.warn(`Button ${nodeId} connected to non-existent node ${conn.endNode}`);
+                                 }
+                             });
+                         } else {
+                             playOutput.innerHTML += `<p>${node.options.buttonText || 'Choice'} (Button leads nowhere)</p>`;
+                         }
+                         waitForUserInput = true; // Wait for button click
+                         break; // IMPORTANT: Stop execution here
+
+                     case 'input':
+                         playOutput.innerHTML = ''; // Clear previous output before showing input prompt
+                         const label = document.createElement('label');
+                         label.htmlFor = 'play-input-field';
+                         label.textContent = node.options.promptLabel || 'Input:';
+                         playOutput.appendChild(label);
+
+                         const inputField = document.createElement('input');
+                         inputField.type = 'text';
+                         inputField.id = 'play-input-field';
+                         playOutput.appendChild(inputField);
+
+                         const submitButton = document.createElement('button');
+                         submitButton.textContent = 'Submit';
+                         submitButton.onclick = () => {
+                             const userInput = inputField.value;
+                             playState.variables['lastInput'] = userInput; // Store for potential use
+                             inputDataForNext = userInput;
+                             nextNodePort = 'out_user_input';
+                              // Find next node ID AFTER submit and run it
+                             const nextConn = connections.find(c => c.startNode === nodeId && c.startPort === nextNodePort);
+                             if (nextConn && nodes[nextConn.endNode]) {
+                                 runPlayStep(nextConn.endNode);
+                             } else {
+                                 playOutput.innerHTML = `<p>(Input leads nowhere)</p>`; // Show if no connection
+                             }
+                         };
+                         playOutput.appendChild(submitButton);
+
+                         inputField.focus(); // Focus the input field
+                         waitForUserInput = true; // Wait for submission
+                         break; // IMPORTANT: Stop execution here
+
+                    case 'llm':
+                         playOutput.innerHTML = `<p><i>Contacting AI assistant...</i></p>`;
+                         // Prefer last input, but could use other variables
+                         const llmContext = playState.variables['lastInput'] || "";
+                         const llmPrompt = node.options.prompt || "";
+                         // Placeholder replacement is now handled inside callOpenAI logic implicitly
+                         // by passing context separately if placeholder isn't used.
+                         const finalPrompt = llmPrompt;
+
+                         // !! Use await and the real function !!
+                         const result = await callOpenAI(finalPrompt, llmContext); // Pass context explicitly
+
+                         // Display the result
+                         if (result.toLowerCase().startsWith('error:')) {
+                             playOutput.innerHTML = `<p style="color: orange;">${result}</p>`;
+                         } else {
+                             playOutput.innerHTML = `<p>Assistant:</p><pre>${result}</pre>`;
+                         }
+
+                         inputDataForNext = result; // Pass result to next node
+                         playState.variables['lastLLMResult'] = result; // Store result
+                         nextNodePort = 'out_result';
+                         break;
+
+                    case 'condition':
+                         playOutput.innerHTML += `<p><i>Evaluating condition...</i></p>`;
+                         let conditionMet = false;
+                         // Use last LLM result if available, otherwise last input, etc.
+                         const conditionInput = playState.variables['lastLLMResult'] || playState.variables['lastInput'] || "";
+
+                         if (node.options.logicType === 'llm') {
+                              const conditionPrompt = node.options.llmConditionPrompt || 'Based on the context, respond only YES or NO.';
+                              playOutput.innerHTML += `<p><i>Asking AI to evaluate... Context: "${conditionInput.substring(0,50)}..."</i></p>`;
+
+                              // !! Use await and the real function !!
+                              const llmResult = await callOpenAI(conditionPrompt, conditionInput);
+
+                              if (llmResult.toLowerCase().startsWith('error:')) {
+                                   playOutput.innerHTML += `<p style="color: orange;">${llmResult}</p>`;
+                                   conditionMet = false; // Default to false on error
+                              } else {
+                                 // Robust check for "YES" ignoring case and surrounding text
+                                 conditionMet = llmResult.trim().toUpperCase() === 'YES';
+                                 playOutput.innerHTML += `<p><i>AI Check Result: "${llmResult}" -> ${conditionMet ? 'Met (YES)' : 'Not Met (NO)'}</i></p>`;
+                              }
+
+                         } else { // Simple logic
+                             const conditionString = node.options.condition || 'false';
+                             playOutput.innerHTML += `<p><i>Checking: ${conditionString}</i></p>`;
+                             try {
+                                 // Use Function constructor for evaluation (be cautious with this in real apps)
+                                 const evaluate = new Function(...Object.keys(playState.variables), `return (${conditionString});`);
+                                 conditionMet = evaluate(...Object.values(playState.variables));
+                                 playOutput.innerHTML += `<p><i>Result: ${conditionMet}</i></p>`;
+                             } catch (err) {
+                                 console.error("Condition evaluation error:", err);
+                                 playOutput.innerHTML += `<p style="color: red;">Condition Error: ${err.message}</p>`;
+                                 conditionMet = false;
+                             }
+                         }
+                         evaluationResult = conditionMet;
+                         nextNodePort = conditionMet ? 'out_true' : 'out_false'; // Choose output port based on result
+                         break;
+
+                    default:
+                        playOutput.innerHTML += `<p>Unknown node type: ${node.type}</p>`;
+                        waitForUserInput = true; // Stop if unknown type encountered
+                        break; // Stop
+                }
+
+            } catch (error) {
+                console.error("Error during play step:", error);
+                playOutput.innerHTML += `<p style="color: red;">Runtime Error: ${error.message}</p>`;
+                waitForUserInput = true; // Stop on error
+            }
+
+            // Find and trigger the next step(s) ONLY if not waiting for user input
+            if (!waitForUserInput) {
+                const nextConnections = connections.filter(c => c.startNode === nodeId && c.startPort === nextNodePort);
+                if (nextConnections.length > 0) {
+                    // For non-button nodes, usually only one connection is expected from a specific output port.
+                    // If multiple are accidentally connected, we'll just follow the first one.
+                    const nextNodeToRun = nextConnections[0].endNode;
+                    // Small delay before running next step for better flow perception
+                    setTimeout(() => runPlayStep(nextNodeToRun), 100); // 100ms delay
+                 } else {
+                     playOutput.innerHTML += `<hr><p>--- End of Path ---</p>`;
+                     // Optionally add a 'Restart' button here automatically
+                }
+            }
+        }
+
+
+         // --- Save/Load/Export/Import ---
+
+         function saveData() {
+             try {
+                 const dataToSave = {
+                     nodes: {},
+                     connections: connections.map(c => ({ // Don't save the 'line' object
+                         id: c.id,
+                         startNode: c.startNode,
+                         startPort: c.startPort,
+                         endNode: c.endNode,
+                         endPort: c.endPort
+                     })),
+                     nextNodeId,
+                     nextConnectionId
+                 };
+                 for (const id in nodes) {
+                     const node = nodes[id];
+                     dataToSave.nodes[id] = { // Don't save element or draggable instance
+                         id: node.id,
+                         type: node.type,
+                         name: node.name,
+                         x: node.x,
+                         y: node.y,
+                         options: node.options // Options ARE saved
+                     };
+                 }
+                 const jsonString = JSON.stringify(dataToSave, null, 2);
+                 return jsonString;
+             } catch (error) {
+                 console.error("Error preparing save data:", error);
+                 alert("Error preparing save data: " + error.message);
+                 return null;
+             }
+         }
+
+        saveButton.addEventListener('click', () => {
+            const jsonString = saveData();
+            if (jsonString) {
+                try {
+                    localStorage.setItem('interactiveCanvasData', jsonString);
+                    alert('Graph saved to browser local storage!');
+                } catch (error) {
+                    console.error("Error saving to localStorage:", error);
+                    alert("Error saving to local storage: " + error.message + "\n\nMaybe storage is full?");
+                }
+            }
+        });
+
+         loadButton.addEventListener('click', () => {
+             const savedData = localStorage.getItem('interactiveCanvasData');
+             if (savedData) {
+                 if (confirm('Load saved graph from local storage? This will overwrite the current canvas.')) {
+                     loadData(savedData);
+                 }
+             } else {
+                 alert('No saved data found in local storage.');
+             }
+         });
+
+        exportButton.addEventListener('click', () => {
+             const jsonString = saveData();
+             if (jsonString) {
+                 const blob = new Blob([jsonString], { type: 'application/json' });
+                 const url = URL.createObjectURL(blob);
+                 const a = document.createElement('a');
+                 a.href = url;
+                 a.download = 'interactive-canvas.json';
+                 document.body.appendChild(a);
+                 a.click();
+                 document.body.removeChild(a);
+                 URL.revokeObjectURL(url);
+             }
+         });
+
+        importButton.addEventListener('click', () => {
+            importFile.click(); // Trigger hidden file input
+        });
+
+        importFile.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+             if (!confirm(`Load graph from file "${file.name}"? This will overwrite the current canvas.`)) {
+                 importFile.value = ''; // Reset file input
+                 return;
+             }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const jsonString = e.target.result;
+                loadData(jsonString);
+                importFile.value = ''; // Reset file input
+            };
+            reader.onerror = (e) => {
+                 alert('Error reading file: ' + e.target.error);
+                 importFile.value = ''; // Reset file input
+            };
+            reader.readAsText(file);
+        });
+
+
+        function loadData(jsonString) {
+             try {
+                 const loadedData = JSON.parse(jsonString);
+
+                 // Clear existing canvas
+                 clearCanvas();
+
+                 // Load nodes first
+                 if (loadedData.nodes) {
+                     for (const id in loadedData.nodes) {
+                         const nodeData = loadedData.nodes[id];
+                         // Pass all loaded data correctly
+                         createNode(nodeData.type, nodeData.x, nodeData.y, nodeData.id, nodeData.options, nodeData.name);
+                     }
+                 } else {
+                      console.warn("Loaded data contains no nodes.");
+                 }
+
+                // Restore counters BEFORE creating connections to avoid ID reuse issues
+                 nextNodeId = loadedData.nextNodeId || Object.keys(nodes).length;
+                 nextConnectionId = loadedData.nextConnectionId || 0; // Reset connection counter before loading them
+
+
+                 // Load connections AFTER all nodes are created and ports exist
+                 if (loadedData.connections) {
+                    connections = []; // Clear existing connections array before reloading
+                    loadedData.connections.forEach(connData => {
+                        const startNode = nodes[connData.startNode];
+                        const endNode = nodes[connData.endNode];
+                        if (startNode && endNode) {
+                             // Ensure ports are rendered before trying to access them
+                             const startPortEl = startNode.element.querySelector(`.port.output[data-port-id="${connData.startPort}"]`);
+                             const endPortEl = endNode.element.querySelector(`.port.input[data-port-id="${connData.endPort}"]`);
+
+                             if (startPortEl && endPortEl) {
+                                 // Use the existing createConnection logic which handles LeaderLine
+                                 createConnection(connData.startNode, connData.startPort, connData.endNode, connData.endPort, startPortEl, endPortEl);
+                             } else {
+                                 console.warn(`Ports not found for connection ${connData.id} (${connData.startPort} -> ${connData.endPort}). Ensure nodes are rendered first.`);
+                             }
+                         } else {
+                             console.warn(`Nodes not found for connection ${connData.id} (Start: ${connData.startNode}, End: ${connData.endNode})`);
+                         }
+                     });
+                 } else {
+                      console.warn("Loaded data contains no connections.");
+                 }
+
+
+                 console.log("Graph loaded successfully.");
+                 alert("Graph loaded!");
+                 selectNode(null); // Deselect any selected node after load
+
+
+             } catch (error) {
+                 console.error("Error loading data:", error);
+                 alert("Error loading data: " + error.message + "\nCheck console for details.");
+                 clearCanvas(); // Clear partial load on error
+             }
+         }
+
+         function clearCanvas() {
+            // Remove all connections
+            while (connections.length > 0) {
+                removeConnection(connections[0].id); // Safely remove one by one
+            }
+            // Remove all nodes
+            Object.keys(nodes).forEach(nodeId => {
+                 if (nodes[nodeId]) {
+                     if (nodes[nodeId].draggable) {
+                        try { nodes[nodeId].draggable.remove(); } catch(e){} // Clean up draggable instance
+                     }
+                     if (nodes[nodeId].element) {
+                        nodes[nodeId].element.remove(); // Remove DOM element
+                     }
+                 }
+            });
+            nodes = {}; // Clear node data
+            connections = []; // Clear connections array
+            selectedNodeId = null;
+            nextNodeId = 0;
+            nextConnectionId = 0;
+            inspectorContent.innerHTML = 'Select a node to edit its properties.';
+            console.log("Canvas cleared.");
+         }
+
+        // --- Initial Load ---
+         // Optional: Try loading from localStorage on page load
+         // loadButton.click(); // Uncomment this line if you want auto-load behaviour
+
+    </script>
+
+</body>
+</html>
